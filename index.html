@@ -1,0 +1,221 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>Pixel War Gemini Fix</title>
+    <style>
+        body { background: #1a1a1a; margin: 0; padding: 0; overflow: hidden; font-family: sans-serif; }
+        #game-wrapper { width: 100vw; height: 100vh; overflow-x: scroll; overflow-y: hidden; }
+        canvas { background: #81d4fa; display: block; image-rendering: pixelated; }
+        
+        /* UI PANEL BAWAH */
+        .ui-panel {
+            position: fixed; bottom: 10px; left: 50%; transform: translateX(-50%);
+            background: rgba(0, 0, 0, 0.8); border: 3px solid #8b4513; border-radius: 10px;
+            padding: 8px; display: flex; align-items: center; gap: 10px; z-index: 100;
+        }
+        .stats { color: #f1c40f; font-weight: bold; font-size: 18px; }
+        .game-btn { padding: 8px 12px; background: #8b4513; color: white; border: 1px solid #fff; border-radius: 5px; font-weight: bold; font-size: 12px; }
+
+        /* MOD MENU REZA */
+        #mod-floating-icon {
+            position: fixed; top: 100px; left: 20px; width: 60px; height: 60px;
+            background: radial-gradient(circle, #ff0000, #990000);
+            border: 3px solid #fff; border-radius: 50%; z-index: 10000;
+            display: flex; align-items: center; justify-content: center;
+            box-shadow: 0 0 15px #ff0000; cursor: pointer; touch-action: none;
+        }
+        #mod-menu {
+            position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%);
+            background: rgba(10, 10, 10, 0.95); border: 2px solid #00ff00;
+            border-radius: 15px; padding: 20px; width: 250px; z-index: 10001;
+            display: none; color: #00ff00; text-align: center;
+        }
+        .mod-btn { width: 100%; background: #222; color: #00ff00; border: 1px solid #00ff00; padding: 10px; margin: 5px 0; border-radius: 5px; font-weight: bold; }
+        .close-btn { background: #ff0000 !important; color: white !important; border: none !important; margin-top: 10px; }
+    </style>
+</head>
+<body>
+
+    <div id="mod-floating-icon" onclick="openMenu()"><b style="color:white; font-size:12px;">MOD</b></div>
+    <div id="mod-menu">
+        <div style="font-weight:bold; border-bottom:1px solid #00ff00; margin-bottom:10px;">GEMINI MOD MENU</div>
+        <button class="mod-btn" onclick="cheatSpawn('plane')">1. PESAWAT (1 UNIT)</button>
+        <button class="mod-btn" onclick="cheatSpawn('tank')">2. TANK (3 UNIT)</button>
+        <button class="mod-btn" onclick="cheatSpawn('naga')">3. NAGA (1 UNIT)</button>
+        <div style="display:flex; justify-content:space-between; margin: 10px 0;">
+            <span>GOLD UNLIMITED</span>
+            <input type="checkbox" id="unlimitedGold" onchange="toggleUnlimited()">
+        </div>
+        <button class="mod-btn close-btn" onclick="closeMenu()">TUTUP MENU</button>
+    </div>
+
+    <div id="game-wrapper"><canvas id="gameCanvas"></canvas></div>
+    <div class="ui-panel">
+        <div class="stats">GOLD: <span id="goldText">200</span></div>
+        <button class="game-btn" onclick="spawnTroop('sword')">Warrior</button>
+        <button class="game-btn" onclick="spawnTroop('archer')">Archer</button>
+        <button class="game-btn" onclick="spawnTroop('plane')">Plane</button>
+    </div>
+
+    <script>
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        const ARENA_WIDTH = 3500;
+        const ARENA_HEIGHT = window.innerHeight;
+        canvas.width = ARENA_WIDTH;
+        canvas.height = ARENA_HEIGHT;
+
+        let gold = 200, isUnlimited = false;
+        let troops = [], enemies = [], projectiles = [], effects = [];
+        let clouds = [], trees = [];
+        let gameTime = 0;
+
+        // --- MOD LOGIC ---
+        const modIcon = document.getElementById('mod-floating-icon');
+        const modMenu = document.getElementById('mod-menu');
+
+        function openMenu() { modMenu.style.display = 'block'; modIcon.style.display = 'none'; }
+        function closeMenu() { modMenu.style.display = 'none'; modIcon.style.display = 'flex'; }
+        function toggleUnlimited() { isUnlimited = document.getElementById('unlimitedGold').checked; }
+
+        function cheatSpawn(type) {
+            if(type === 'plane') troops.push(new Troop('blue', 'plane'));
+            else if(type === 'tank') for(let i=0; i<3; i++) troops.push(new Troop('blue', 'tank'));
+            else if(type === 'naga') troops.push(new Troop('blue', 'naga'));
+            closeMenu();
+        }
+
+        // Mod Icon Dragging
+        let offsetX, offsetY, isDragging = false;
+        modIcon.addEventListener('touchstart', (e) => {
+            isDragging = false;
+            offsetX = e.touches[0].clientX - modIcon.offsetLeft;
+            offsetY = e.touches[0].clientY - modIcon.offsetTop;
+        });
+        modIcon.addEventListener('touchmove', (e) => {
+            isDragging = true;
+            modIcon.style.left = (e.touches[0].clientX - offsetX) + 'px';
+            modIcon.style.top = (e.touches[0].clientY - offsetY) + 'px';
+            e.preventDefault();
+        });
+        modIcon.addEventListener('touchend', () => { if(!isDragging) openMenu(); });
+
+        // --- GAME ENGINE ---
+        for(let i=0; i<10; i++) clouds.push({x: Math.random()*ARENA_WIDTH, y: 50+Math.random()*100, w: 80+Math.random()*60});
+        for(let i=0; i<20; i++) trees.push({x: 400+Math.random()*(ARENA_WIDTH-800), y: ARENA_HEIGHT/2+50});
+
+        class Base {
+            constructor(side) {
+                this.side = side;
+                this.x = side === 'blue' ? 0 : ARENA_WIDTH - 160;
+                this.y = ARENA_HEIGHT / 2 - 100;
+                this.hp = 5000;
+            }
+            draw() {
+                const c = this.side === 'blue' ? '#1e88e5' : '#e53935';
+                ctx.fillStyle = '#37474f'; ctx.fillRect(this.x, this.y, 160, 250); // Body
+                ctx.fillStyle = c; ctx.fillRect(this.x+20, this.y-40, 120, 80); // Head
+                ctx.fillStyle = '#212121'; ctx.fillRect(this.side==='blue'?this.x+120:this.x-40, this.y-20, 80, 20); // Gun
+                // HP Bar
+                ctx.fillStyle = 'red'; ctx.fillRect(this.x, this.y-80, 160, 10);
+                ctx.fillStyle = 'lime'; ctx.fillRect(this.x, this.y-80, (this.hp/5000)*160, 10);
+            }
+        }
+
+        class Troop {
+            constructor(side, type) {
+                this.side = side; this.type = type;
+                this.size = (type==='tank'||type==='plane') ? 70 : 45;
+                this.x = side === 'blue' ? 180 : ARENA_WIDTH - 250;
+                this.y = (type==='plane') ? 100 : ARENA_HEIGHT/2 + 50 + (Math.random()*80);
+                this.hp = type==='tank'?800:(type==='naga'?1500:150);
+                this.maxHp = this.hp;
+                this.range = type==='archer'||type==='plane'?350:(type==='sword'?60:500);
+                this.speed = type==='plane'?2.5:(type==='tank'?0.8:1.5);
+                this.lastAtk = 0;
+            }
+            draw() {
+                const isR = this.side === 'blue';
+                const walk = (this.type==='plane') ? 0 : Math.sin(gameTime*0.2)*8;
+                ctx.save();
+                ctx.translate(this.x, this.y);
+                
+                if(this.type === 'plane') {
+                    ctx.fillStyle = isR?'#0d47a1':'#b71c1c'; ctx.fillRect(0,0, 80, 30); // Body
+                    ctx.fillStyle = '#222'; ctx.fillRect(20, 25, 40, 10); // Cannon
+                } else {
+                    ctx.fillStyle = '#222'; ctx.fillRect(5, this.size+walk, 10, 12); ctx.fillRect(this.size-15, this.size-walk, 10, 12); // Legs
+                    ctx.fillStyle = isR?'#1e88e5':'#e53935'; if(this.type==='tank')ctx.fillStyle='#1b5e20'; ctx.fillRect(0, 10, this.size, this.size); // Body
+                    ctx.fillStyle = '#ffccbc'; ctx.fillRect(10, -10, this.size-20, 20); // Face
+                    ctx.fillStyle = isR?'#ffccbc':'#ffccbc'; ctx.fillRect(isR?this.size:-15, 20, 15, 15); // Hand
+                    ctx.fillStyle = '#444'; if(this.type==='sword') ctx.fillRect(isR?this.size+5:-10, 0, 8, 40); // Sword
+                }
+                ctx.fillStyle='red'; ctx.fillRect(0, -25, this.size, 5); ctx.fillStyle='lime'; ctx.fillRect(0, -25, (this.hp/this.maxHp)*this.size, 5);
+                ctx.restore();
+            }
+            update(opps, oppB) {
+                let target = opps.find(o => Math.abs(this.x - o.x) < this.range);
+                let distB = Math.abs(this.x - oppB.x);
+                if(target || distB < this.range) {
+                    if(Date.now() - this.lastAtk > 1500) {
+                        if(this.type==='sword' && target) target.hp -= 20;
+                        else projectiles.push(new Projectile(this.x+20, this.y+10, target || oppB, this.side, this.type));
+                        this.lastAtk = Date.now();
+                    }
+                } else { this.x += (this.side==='blue'?this.speed:-this.speed); }
+            }
+        }
+
+        class Projectile {
+            constructor(x, y, target, side, type) {
+                this.x = x; this.y = y; this.side = side;
+                const dx = (target.x+20) - x, dy = (target.y+20) - y, dist = Math.sqrt(dx*dx+dy*dy);
+                this.vx = (dx/dist)*10; this.vy = (dy/dist)*10;
+                this.dead = false; this.dmg = type==='plane'||type==='tank'?80:25;
+            }
+            update(opps, oppB) {
+                this.x += this.vx; this.y += this.vy;
+                opps.forEach(o => { if(Math.abs(this.x-(o.x+20))<30) { o.hp -= this.dmg; this.dead = true; }});
+                if(Math.abs(this.x-(oppB.x+80))<60) { oppB.hp -= this.dmg; this.dead = true; }
+                if(this.x<0 || this.x>ARENA_WIDTH) this.dead = true;
+            }
+            draw() { ctx.fillStyle='#333'; ctx.beginPath(); ctx.arc(this.x, this.y, 5, 0, Math.PI*2); ctx.fill(); }
+        }
+
+        const pBase = new Base('blue'), eBase = new Base('red');
+
+        function spawnTroop(type, free=false) {
+            if(isUnlimited || free || gold >= 40) {
+                if(!isUnlimited && !free) gold -= 40;
+                troops.push(new Troop('blue', type));
+            }
+        }
+
+        setInterval(() => { gold = isUnlimited?9999:gold+2; document.getElementById('goldText').innerText = gold; }, 1000);
+        setInterval(() => { enemies.push(new Troop('red', Math.random()>0.8?'plane':'sword')); }, 4000);
+
+        function gameLoop() {
+            gameTime++; ctx.clearRect(0, 0, canvas.width, canvas.height);
+            
+            // BACKGROUND
+            ctx.fillStyle = '#81d4fa'; ctx.fillRect(0, 0, ARENA_WIDTH, ARENA_HEIGHT); // Sky
+            ctx.fillStyle = '#388e3c'; ctx.fillRect(0, ARENA_HEIGHT/2+30, ARENA_WIDTH, ARENA_HEIGHT/2); // Ground
+            ctx.fillStyle = "white"; clouds.forEach(c => ctx.fillRect(c.x, c.y, c.w, 30));
+            ctx.fillStyle = "#2e7d32"; trees.forEach(t => ctx.fillRect(t.x, t.y, 30, 60));
+
+            pBase.draw(); eBase.draw();
+            troops = troops.filter(t => t.hp > 0); enemies = enemies.filter(e => e.hp > 0);
+            projectiles = projectiles.filter(p => !p.dead);
+
+            troops.forEach(t => { t.draw(); t.update(enemies, eBase); });
+            enemies.forEach(e => { e.draw(); e.update(troops, pBase); });
+            projectiles.forEach(p => { p.draw(); p.update(p.side==='blue'?enemies:troops, p.side==='blue'?eBase:pBase); });
+
+            requestAnimationFrame(gameLoop);
+        }
+        gameLoop();
+    </script>
+</body>
+</html>
